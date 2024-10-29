@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Floating Swarm Simulation with 3D dynamics v8</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: black; }
+        #controls {
+            position: absolute;
+            bottom: 60px; /* Siirretty alas */
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(54, 45, 156, 0.424); /* Lisätty läpinäkyvyyttä */
+            padding: 10px;
+            border-radius: 5px;
+            color: rgba(157, 183, 210, 0.643);
+        }
+        input[type="range"] {
+            opacity: 0.5; /* Lisää sliderien läpinäkyvyyttä */
+        }
+        #pageTitle {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: grey; /* Vaihdettu väri harmaaksi */
+            font-size: 1.0rem; /* Pienempi fonttikoko */
+            font-family: Arial, sans-serif; /* Vaihdettu Arialiksi */
+        }
+        #credits {
+            position: absolute;
+            bottom: 10px; /* Oikea alakulma */
+            right: 10px;
+            color: grey; /* Harmaa väri */
+            font-size: 0.8rem; /* Pienempi fonttikoko */
+            font-family: Arial, sans-serif; /* Arial-fontti */
+            text-align: right;
+        }
+
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+    <script src="utilities.js"></script>
+</head>
+<body>
+    <div id="pageTitle"></div> <!-- Lisätty sivun otsikko tähän -->
+    <div id="controls">
+        <label for="zoomSlider">Zoom:</label>
+        <input type="range" id="zoomSlider" min="1" max="10" value="5" step="0.1">
+        <span id="zoomValue">5</span>
+        <br>
+        <label for="fpsSlider">FPS:</label>
+        <input type="range" id="fpsSlider" min="10" max="120" value="60" step="1">
+        <span id="fpsValue">60</span>
+    </div>
+    <div id="credits">
+        JukkaTLinjama 2024<br>
+        webGL powered by Three.js<br>
+        ChatGPT 4.0 by OpenAI with canvas integration
+    </div>
+    
+</body>
+
+<script>
+    document.addEventListener("DOMContentLoaded", () => {
+        document.getElementById('pageTitle').textContent = document.title;
+    });
+
+    // Define all the global variables for the main logic
+
+    const simCfg = { 
+        core: { boxSize: 2, timeStep: 1 / 60 },
+        swarm: { numElements: 8 },
+        target: { numElements: 8, size: 0.06 },
+        waveforms: { x: [], y: [], z: [] } // wavelet waveforms will be set later
+    };
+
+    // Generate waveforms and store in simCfg using generateWavelet
+    const waveletData = window.generateWavelet(
+        120,   // baseLength -- base wavelet lenght in steps
+        0.9,   // baseFrequency  -- freq cycles per baseLenght
+        0.9,   // freqVariation
+        0.5,   // baseTau -- exp decay envelope
+        1.5,   // tauVariation
+        5,     // numWavelets -- how many randomised basewavelets to be generated with overlap
+        40     // overlapPercent
+    );
+
+    // Määritä waveformSampleRate wavelet renderöinnin nopeudenkertoimeksi
+    const waveformSampleRate = 0.2; // Esim. 0.7 hidastaa liikettä, 2.5 nopeuttaa
+    // Määritä delayIncrement, joka ohjaa viiveen kasvua jokaiselle target-elementille
+    const delayIncrement = 1; // Voit asettaa arvon 1..30, esim. 5 tarkoittaa viiden askeleen kasvua per indeksi
+
+    // Store the generated waveforms in simCfg.waveforms
+    simCfg.waveforms.x = waveletData.waveletX;
+    simCfg.waveforms.y = waveletData.waveletY;
+    simCfg.waveforms.z = waveletData.waveletZ;
+    // Initialize target swarm locations after simCfg has been defined
+    simCfg.targetSwarmLocations = generateSwarmElemPositions(simCfg.target.numElements);
+
+    console.log('Simulation Configuration:', JSON.stringify(simCfg, null, 2));
+
+    let swarmElements, targetElements, scene, camera, renderer;
+    let frameCount = 0;
+
+///////////////////////////////////////////////////////////////////////////////////////
+
+    // Initialize Three.js setup
+    function initializeThreeJS() {
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        renderer = new THREE.WebGLRenderer();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        camera.position.z = 5;
+    }
+    // Add event listeners for sliders
+    document.getElementById('zoomSlider').addEventListener('input', (event) => {
+        const zoomValue = parseFloat(event.target.value);
+        camera.position.z = zoomValue; // Update camera zoom
+        document.getElementById('zoomValue').textContent = zoomValue; // Update the displayed value
+    });
+
+    document.getElementById('fpsSlider').addEventListener('input', (event) => {
+        const fps = parseFloat(event.target.value);
+        simCfg.core.timeStep = 1 / fps; // Update the timeStep in simCfg
+        document.getElementById('fpsValue').textContent = fps; // Update the displayed value
+    });
+
+    // Initialize simulation elements
+    function initializeSimulationElements() {
+        swarmElements = initializeSwarmElements(simCfg.swarm.numElements, simCfg.core.boxSize);
+        targetElements = initializeTargetElementsWithOffsets(simCfg.target.numElements, simCfg.targetSwarmLocations);
+
+            // Debugging: Check if the arrays are initialized correctly
+            console.log("Initialized swarmElements:", swarmElements);
+            console.log("Initialized targetElements:", targetElements);
+
+            if (!swarmElements || swarmElements.length === 0) {
+                console.error("Error: swarmElements is not properly initialized.");
+            }
+            if (!targetElements || targetElements.length === 0) {
+                console.error("Error: targetElements is not properly initialized.");
+            }
+
+        // Add swarm elements to the scene
+        swarmElements.forEach((swarm) => {
+            const color = getRandomColor(0xADD8E6, 0.3);
+            const material = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.7 });
+            const geometry = new THREE.SphereGeometry(0.1, 16, 16);
+            const sphere = new THREE.Mesh(geometry, material);
+            sphere.position.set(swarm.position.x, swarm.position.y, swarm.position.z);
+            scene.add(sphere);
+            swarm.mesh = sphere;
+        });
+
+        // Add target elements to the scene
+        targetElements.forEach((target) => {
+            const color = getRandomColor(0xff0000, 0.3);
+            const material = new THREE.MeshBasicMaterial({ color: color, transparent: true, opacity: 0.3 });
+            const geometry = new THREE.SphereGeometry(simCfg.target.size, 16, 16);
+            const sphere = new THREE.Mesh(geometry, material);
+            sphere.position.set(target.position.x, target.position.y, target.position.z);
+            scene.add(sphere);
+            target.mesh = sphere;
+        });
+    }
+
+    // Animation loop
+    function animate() {
+        requestAnimationFrame(animate);
+        frameCount++;
+
+        if (frameCount % 120 === 0) {     //log every 120 frame
+            console.log(`Frame: ${frameCount}`);
+            swarmElements.forEach((swarm, index) => console.log(`Swarm Element ${index}:`, swarm));
+            targetElements.forEach((target, index) => console.log(`Target Element ${index}:`, target));
+            
+            targetElements.forEach((target, index) => {
+            // Laske delta-arvo suhteessa muihin elementteihin
+            const delta = targetElements.reduce((acc, other, otherIndex) => {
+                if (index !== otherIndex) {
+                    const dx = target.position.x - other.position.x;
+                    const dy = target.position.y - other.position.y;
+                    const dz = target.position.z - other.position.z;
+                    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                    acc.push(distance);
+                }
+                return acc;
+            }, []);
+        
+                console.log(`Target Element ${index}:`, target, 'Delta:', delta);
+            });
+            }
+
+        // Update target distribution every 20 frames to minimize cost function
+        if (frameCount % 20 === 0) {
+            window.updateTargetDistribution(targetElements, 50, 0.9); // Adjust ideal distance and learning rate as needed
+        }
+           // Update target positions and velocities using waveform
+        targetElements.forEach((target, index) => {
+
+            // Calculate the waveform index using both the sample rate and a progressive delay based on the element's index
+            const delay = index * delayIncrement;
+            const waveformIndex = Math.floor((frameCount * waveformSampleRate + delay) % simCfg.waveforms.x.length);
+       
+            target.position.x = simCfg.targetSwarmLocations[index].x + simCfg.waveforms.x[waveformIndex];
+            target.position.y = simCfg.targetSwarmLocations[index].y + simCfg.waveforms.y[waveformIndex];
+            target.position.z = simCfg.targetSwarmLocations[index].z + simCfg.waveforms.z[waveformIndex];
+            
+            target.updateVelocity(simCfg.core.timeStep); // Update velocity from past position
+            target.mesh.position.set(target.position.x, target.position.y, target.position.z);
+        });
+
+        swarmElements.forEach((swarm, index) => {
+            if (targetElements[index % targetElements.length]) {
+                swarm.update(targetElements[index % targetElements.length].position,
+                             targetElements[index % targetElements.length].velocity,
+                             simCfg.core.timeStep);
+                swarm.mesh.position.set(swarm.position.x, swarm.position.y, swarm.position.z);
+            }
+        });
+
+        renderer.render(scene, camera);
+    }
+
+    // Initialize everything and start the animation
+    initializeThreeJS();
+    initializeSimulationElements();
+    animate();
+</script>
