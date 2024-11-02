@@ -49,7 +49,28 @@ window.getRandomColor = function(baseColor, variance) {
     );
 };
 
-// Utility function to generate wavelets
+// Linear interpolation between two points
+window.interpolate = function (value1, value2, fraction) {
+    return value1 + (value2 - value1) * fraction;
+};
+
+// Funcation Generates an array of target indices based on the center, range, and spread factor
+window.generateFollowedIndices = function(numTargets, targetIndexRange, spreadFactor = 2) {
+    const followedIndices = [];
+    const centerIndex = Math.floor(numTargets / 2);
+
+    for (let i = -Math.floor(targetIndexRange / 2); i <= Math.floor(targetIndexRange / 2); i++) {
+        const targetIndex = centerIndex + i * spreadFactor;
+        if (targetIndex >= 0 && targetIndex < numTargets) {
+            followedIndices.push(targetIndex);
+        }
+    }
+
+    return followedIndices;
+};
+
+
+// Utility function to generate radnomized wavelets to overlapping waveforms waveletX Y Z
 window.generateWavelet = function(baseLength, baseFrequency, freqVariation, baseTau, tauVariation, numWavelets, overlapPercent = 30) {
     const overlapFactor = 1 - (overlapPercent / 100); // Calculate the overlap factor based on the percentage
     const overlapLength = Math.floor(baseLength * overlapFactor); // Length of the overlap
@@ -82,22 +103,34 @@ window.generateWavelet = function(baseLength, baseFrequency, freqVariation, base
             waveletZ[startOffset + j] += Math.sin(2 * Math.PI * frequencyZ * time) * Math.exp(-tauZ * time) * sinWeight;
         }
     }
-
     return { waveletX, waveletY, waveletZ };
 };
 
-    // Function to generate swarm element (target) positions based on number of elements
-    window.generateSwarmElemPositions = function(numElements) {
-        const positions = [];
-        for (let i = 0; i < numElements; i++) {
-            positions.push({
-                x: (Math.random() - 0.5) * 2, // Random positions within a range of -1 to 1
-                y: (Math.random() - 0.5) * 2,
-                z: (Math.random() - 0.5) * 2
-            });
-        }
-        return positions;
-    };
+// function to initilaise swarm shape, static target positions
+window.generateSwarmElemPositions = function(numElements) {
+    const positions = [];
+    
+    // Define the size of the grid and the flattening factor for z
+    const gridSize = Math.ceil(Math.sqrt(numElements)); // Number of elements per row/column for a grid-like arrangement
+    const spacing = 0.5; // Spacing between elements in the x and y directions
+    const flattenZ = 1.9; // Factor to flatten the z position
+
+    for (let i = 0; i < numElements; i++) {
+        // Calculate grid position (x, y)
+        const row = Math.floor(i / gridSize);
+        const col = i % gridSize;
+
+        // Set x and y positions for even spacing
+        const x = (col - gridSize / 2) * spacing; // Centering the grid around (0, 0)
+        const y = (row - gridSize / 2) * spacing;
+
+        // Set z position with minimal variation for a "flat" 3D effect
+        const z = (Math.random() - 0.5) * flattenZ; // Small random variation to avoid perfectly flat appearance
+
+        positions.push({ x, y, z });
+    }
+    return positions;
+};
 
 // Function to initialize swarm elements
 window.initializeSwarmElements = function(numElements, boxSize) {
@@ -120,7 +153,9 @@ window.initializeSwarmElements = function(numElements, boxSize) {
 
 // Function to initialize target elements with velocity calculation
 window.initializeTargetElementsWithOffsets = function(numElements, targetSwarmLocations) {
-    const targetElements = [];
+    const initializedTargets = [];
+    console.log(Array.isArray(initializedTargets)); // Tämä tulostaa `true`, jos initializedTargets on taulukko
+
     let previousPositions = Array(numElements).fill({ x: 0, y: 0, z: 0 });
 
     for (let i = 0; i < numElements; i++) {
@@ -143,44 +178,30 @@ window.initializeTargetElementsWithOffsets = function(numElements, targetSwarmLo
                 previousPositions[i] = { ...this.position };
             }
         };
-        targetElements.push(targetDynamics);
+        initializedTargets.push(targetDynamics);
     }
-
     // Debug: Ensure the target elements array is populated before returning
     console.log("Target Elements Initialized:", targetElements);
 
-    return targetElements; // Ensure the targetElements array is returned
+    return initializedTargets; // Ensure the targetElements array is returned
 };
 
-// Function to calculate a more evenly distributed target element arrangement using a cost function
-window.updateTargetDistribution = function(targetElements, idealDistance, learningRate) {
-    targetElements.forEach((target, index) => {
-        let force = { x: 0, y: 0, z: 0 };
-        targetElements.forEach((other, otherIndex) => {
-            if (index !== otherIndex) {
-                // Calculate distance between current target and other targets
-                const dx = target.position.x - other.position.x;
-                const dy = target.position.y - other.position.y;
-                const dz = target.position.z - other.position.z;
+// ///////////////////////////////////////////////      
+// optional function to modulate swarm targets sinusoidally
 
-                const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+window.modulateTargetBasePositions = function(targetBasePositions) {
+    const frequency = 0.2; // Frequency of oscillation
+    const amplitude = 0.005; // Amplitude of oscillation
+    let oscillationTime = 0; // Time variable to control oscillation
 
-                // Calculate the deviation from the ideal distance
-                const delta = distance - idealDistance;
+    // Increment time variable
+    oscillationTime += 0.2;
 
-                // Calculate force to move towards an even distribution
-                const forceMagnitude = -learningRate * delta;
-
-                // Update force components
-                force.x += (forceMagnitude * dx) / distance;
-                force.y += (forceMagnitude * dy) / distance;
-                force.z += (forceMagnitude * dz) / distance;
-            }
-        });
-
-        // Update target position based on calculated force
-        target.position.x += force.x;
-        target.position.y += force.y;
-        target.position.z += force.z;
+    targetBasePositions.forEach((basePos, index) => {
+        // Apply a small oscillation based on sine wave
+        basePos.x += amplitude * Math.sin(frequency * oscillationTime + index);
+        basePos.y += amplitude * Math.sin(frequency * oscillationTime + index); // Phase shift for variety
+        basePos.z += 0.2 * amplitude * Math.sin(frequency * oscillationTime + index); // Another phase shift
     });
 };
+
