@@ -3,21 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Floating Swarm Simulation with 3D dynamics v8</title>
+    <title>Floating Swarm Simulation with 3D dynamics v10</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: black; }
         #controls {
             position: absolute;
-            bottom: 60px; /* Siirretty alas */
+            bottom: 40px; /* Siirretty alas */
             left: 50%;
             transform: translateX(-50%);
-            background: rgba(54, 45, 156, 0.424); /* Lisätty läpinäkyvyyttä */
+            background: rgba(45, 37, 129, 0.279); /* Lisätty läpinäkyvyyttä */
             padding: 10px;
             border-radius: 5px;
             color: rgba(157, 183, 210, 0.643);
         }
         input[type="range"] {
-            opacity: 0.5; /* Lisää sliderien läpinäkyvyyttä */
+            opacity: 0.4; /* Lisää sliderien läpinäkyvyyttä */
         }
         #pageTitle {
             position: absolute;
@@ -33,7 +33,7 @@
             bottom: 10px; /* Oikea alakulma */
             right: 10px;
             color: grey; /* Harmaa väri */
-            font-size: 0.8rem; /* Pienempi fonttikoko */
+            font-size: 0.6rem; /* Pienempi fonttikoko */
             font-family: Arial, sans-serif; /* Arial-fontti */
             text-align: right;
         }
@@ -55,8 +55,7 @@
     </div>
     <div id="credits">
         JukkaTLinjama 2024<br>
-        webGL powered by Three.js<br>
-        ChatGPT 4.0 by OpenAI with canvas integration
+        webGL & ChatGPT 4.0
     </div>
     
 </body>
@@ -66,37 +65,42 @@
         document.getElementById('pageTitle').textContent = document.title;
     });
 
-    // Define all the global variables for the main logic
+    ////////////   Define all the global variables for the main logic     ////////////////////////////////////////////
 
     const simCfg = { 
         core: { boxSize: 2, timeStep: 1 / 60 },
         swarm: { numElements: 8 },
-        target: { numElements: 8, size: 0.06 },
+        target: { numElements: 90, size: 0.06 },
         waveforms: { x: [], y: [], z: [] } // wavelet waveforms will be set later
     };
 
     // Generate waveforms and store in simCfg using generateWavelet
     const waveletData = window.generateWavelet(
         120,   // baseLength -- base wavelet lenght in steps
-        0.9,   // baseFrequency  -- freq cycles per baseLenght
-        0.9,   // freqVariation
-        0.5,   // baseTau -- exp decay envelope
+        1.9,   // baseFrequency  -- freq cycles per baseLenght
+        1.2,   // freqVariation
+        0.5,   // baseTau -- exp decay envelope, may be negative as well..
         1.5,   // tauVariation
         5,     // numWavelets -- how many randomised basewavelets to be generated with overlap
         40     // overlapPercent
     );
 
-    // Määritä waveformSampleRate wavelet renderöinnin nopeudenkertoimeksi
+        // Määritä waveformSampleRate wavelet renderöinnin nopeudenkertoimeksi
     const waveformSampleRate = 0.2; // Esim. 0.7 hidastaa liikettä, 2.5 nopeuttaa
-    // Määritä delayIncrement, joka ohjaa viiveen kasvua jokaiselle target-elementille
-    const delayIncrement = 1; // Voit asettaa arvon 1..30, esim. 5 tarkoittaa viiden askeleen kasvua per indeksi
+        // Määritä delayIncrement, joka ohjaa viiveen kasvua jokaiselle target-elementille
+    const delayIncrement = .5; //  esim. 5 tarkoittaa viiden askeleen kasvua per indeksi
 
-    // Store the generated waveforms in simCfg.waveforms
-    simCfg.waveforms.x = waveletData.waveletX;
+    simCfg.waveforms.x = waveletData.waveletX;    // Store the generated waveforms in simCfg.waveforms
     simCfg.waveforms.y = waveletData.waveletY;
     simCfg.waveforms.z = waveletData.waveletZ;
-    // Initialize target swarm locations after simCfg has been defined
+
+    // Initialize target swarm locations 
     simCfg.targetSwarmLocations = generateSwarmElemPositions(simCfg.target.numElements);
+
+    const targetIndexRange = 10; // asettaa haluamasi target index alueen suuruuden
+    const spreadFactor = 2; // Määrittää kohdeindeksien hajautuksen
+    const followedIndices = generateFollowedIndices(simCfg.target.numElements, targetIndexRange, spreadFactor);
+
 
     console.log('Simulation Configuration:', JSON.stringify(simCfg, null, 2));
 
@@ -136,13 +140,6 @@
             console.log("Initialized swarmElements:", swarmElements);
             console.log("Initialized targetElements:", targetElements);
 
-            if (!swarmElements || swarmElements.length === 0) {
-                console.error("Error: swarmElements is not properly initialized.");
-            }
-            if (!targetElements || targetElements.length === 0) {
-                console.error("Error: targetElements is not properly initialized.");
-            }
-
         // Add swarm elements to the scene
         swarmElements.forEach((swarm) => {
             const color = getRandomColor(0xADD8E6, 0.3);
@@ -175,51 +172,37 @@
             console.log(`Frame: ${frameCount}`);
             swarmElements.forEach((swarm, index) => console.log(`Swarm Element ${index}:`, swarm));
             targetElements.forEach((target, index) => console.log(`Target Element ${index}:`, target));
-            
-            targetElements.forEach((target, index) => {
-            // Laske delta-arvo suhteessa muihin elementteihin
-            const delta = targetElements.reduce((acc, other, otherIndex) => {
-                if (index !== otherIndex) {
-                    const dx = target.position.x - other.position.x;
-                    const dy = target.position.y - other.position.y;
-                    const dz = target.position.z - other.position.z;
-                    const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
-                    acc.push(distance);
-                }
-                return acc;
-            }, []);
-        
-                console.log(`Target Element ${index}:`, target, 'Delta:', delta);
+        }    
+
+           // Update target positions and velocities using waveform with sample interpolation
+           targetElements.forEach((target, index) => {
+                const delay = index * delayIncrement;
+                const exactIndex = (frameCount * waveformSampleRate + delay) % simCfg.waveforms.x.length;
+
+                const lowerIndex = Math.floor(exactIndex);
+                const upperIndex = (lowerIndex + 1) % simCfg.waveforms.x.length;
+                const fraction = exactIndex - lowerIndex;
+
+                target.position.x = simCfg.targetSwarmLocations[index].x +
+                                    interpolate(simCfg.waveforms.x[lowerIndex], simCfg.waveforms.x[upperIndex], fraction);
+                target.position.y = simCfg.targetSwarmLocations[index].y +
+                                    interpolate(simCfg.waveforms.y[lowerIndex], simCfg.waveforms.y[upperIndex], fraction);
+                target.position.z = simCfg.targetSwarmLocations[index].z +
+                                    interpolate(simCfg.waveforms.z[lowerIndex], simCfg.waveforms.z[upperIndex], fraction);
+
+                target.updateVelocity(simCfg.core.timeStep);
+                target.mesh.position.set(target.position.x, target.position.y, target.position.z);
             });
-            }
 
-        // Update target distribution every 20 frames to minimize cost function
-        if (frameCount % 20 === 0) {
-            window.updateTargetDistribution(targetElements, 50, 0.9); // Adjust ideal distance and learning rate as needed
-        }
-           // Update target positions and velocities using waveform
-        targetElements.forEach((target, index) => {
-
-            // Calculate the waveform index using both the sample rate and a progressive delay based on the element's index
-            const delay = index * delayIncrement;
-            const waveformIndex = Math.floor((frameCount * waveformSampleRate + delay) % simCfg.waveforms.x.length);
-       
-            target.position.x = simCfg.targetSwarmLocations[index].x + simCfg.waveforms.x[waveformIndex];
-            target.position.y = simCfg.targetSwarmLocations[index].y + simCfg.waveforms.y[waveformIndex];
-            target.position.z = simCfg.targetSwarmLocations[index].z + simCfg.waveforms.z[waveformIndex];
-            
-            target.updateVelocity(simCfg.core.timeStep); // Update velocity from past position
-            target.mesh.position.set(target.position.x, target.position.y, target.position.z);
-        });
-
-        swarmElements.forEach((swarm, index) => {
-            if (targetElements[index % targetElements.length]) {
-                swarm.update(targetElements[index % targetElements.length].position,
-                             targetElements[index % targetElements.length].velocity,
-                             simCfg.core.timeStep);
-                swarm.mesh.position.set(swarm.position.x, swarm.position.y, swarm.position.z);
-            }
-        });
+            swarmElements.forEach((swarm, index) => {
+                const targetIndex = followedIndices[index % followedIndices.length];
+                if (targetElements[targetIndex]) {
+                    swarm.update(targetElements[targetIndex].position,
+                                targetElements[targetIndex].velocity,
+                                simCfg.core.timeStep);
+                    swarm.mesh.position.set(swarm.position.x, swarm.position.y, swarm.position.z);
+                }
+            });
 
         renderer.render(scene, camera);
     }
